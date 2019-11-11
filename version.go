@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/juju/errors"
 	"gopkg.in/mgo.v2/bson"
 )
 
@@ -21,6 +22,11 @@ type Number struct {
 	Tag   string
 	Patch int
 	Build int
+
+	// provenanceHash is metadata used by NumberWithProvenance.
+	// It exists here due to the extensive use of Number within Juju
+	// that make it very difficult to pass around.
+	provenanceHash string
 }
 
 // Zero is occasionally convenient and readable.
@@ -113,11 +119,21 @@ const (
 	// - 1.2-alpha3-series-arch
 	// - 1.2-alpha3.4-series-arch
 	BinaryRegex = NumberRegex + `-([^-]+)-([^-]+)`
+	// NumberWithProvenance for matching versions string with a provenance hash
+	// with the forms:
+	// - (all forms of Number)
+	// - 1.2-ffffffffffffffffffffffffffffffffffffffff
+	// - 1.2.3-ffffffffffffffffffffffffffffffffffffffff
+	// - 1.2.3.4-ffffffffffffffffffffffffffffffffffffffff
+	// - 1.2-alpha3-ffffffffffffffffffffffffffffffffffffffff
+	// - 1.2-alpha3.4-ffffffffffffffffffffffffffffffffffffffff
+	NumberWithProvenanceRegex = `(` + NumberRegex + `)(?:-([0-9a-f]{40}))?`
 )
 
 var (
-	binaryPat = regexp.MustCompile(`^` + BinaryRegex + `$`)
-	numberPat = regexp.MustCompile(`^` + NumberRegex + `$`)
+	binaryPat               = regexp.MustCompile(`^` + BinaryRegex + `$`)
+	numberPat               = regexp.MustCompile(`^` + NumberRegex + `$`)
+	numberWithProvenancePat = regexp.MustCompile(`^` + NumberWithProvenanceRegex + `$`)
 )
 
 // MustParse parses a version and panics if it does
@@ -206,7 +222,7 @@ func (n Number) String() string {
 // n is less than, equal to or greater than other.
 // The comparison compares Major, then Minor, then Patch, then Build, using the first difference as
 func (n Number) Compare(other Number) int {
-	if n == other {
+	if StripProvenance(n) == StripProvenance(other) {
 		return 0
 	}
 	less := false
@@ -311,4 +327,115 @@ func ParseMajorMinor(vers string) (int, int, error) {
 		return -1, -1, fmt.Errorf("invalid major.minor version number %s", vers)
 	}
 	return major, minor, nil
+}
+
+// NumberWithProvenance is a Number that exposes/serializes a
+// provenance hash.
+type NumberWithProvenance Number
+
+// String returns the string representation of this NumberWithProvenance.
+func (n NumberWithProvenance) String() string {
+	str := Number(n).String()
+	if n.provenanceHash != "" {
+		str = fmt.Sprintf("%s-%s", str, n.provenanceHash)
+	}
+	return str
+}
+
+// GetBSON implements bson.Getter.
+func (n NumberWithProvenance) GetBSON() (interface{}, error) {
+	return n.String(), nil
+}
+
+// SetBSON implements bson.Setter.
+func (n *NumberWithProvenance) SetBSON(raw bson.Raw) error {
+	var s string
+	err := raw.Unmarshal(&s)
+	if err != nil {
+		return err
+	}
+	v, err := ParseNumberWithProvenance(s)
+	if err != nil {
+		return err
+	}
+	*n = v
+	return nil
+}
+
+// MarshalJSON implements json.Marshaler.
+func (n NumberWithProvenance) MarshalJSON() ([]byte, error) {
+	return json.Marshal(n.String())
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (n *NumberWithProvenance) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	v, err := ParseNumberWithProvenance(s)
+	if err != nil {
+		return err
+	}
+	*n = v
+	return nil
+}
+
+// MarshalYAML implements yaml.v2.Marshaller interface
+func (n NumberWithProvenance) MarshalYAML() (interface{}, error) {
+	return n.String(), nil
+}
+
+// UnmarshalYAML implements the yaml.Unmarshaller interface
+func (n *NumberWithProvenance) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var vstr string
+	err := unmarshal(&vstr)
+	if err != nil {
+		return err
+	}
+	v, err := ParseNumberWithProvenance(vstr)
+	if err != nil {
+		return err
+	}
+	*n = v
+	return nil
+}
+
+// Hash returns the provenance hash associated with the Number
+func (n NumberWithProvenance) Hash() string {
+	return n.provenanceHash
+}
+
+// NewNumberWithProvenance returns a Number with hash as provenance.
+func NewNumberWithProvenance(n Number, hash string) NumberWithProvenance {
+	n.provenanceHash = hash
+	return NumberWithProvenance(n)
+}
+
+// ParseNumberWithProvenance parses a version string optionally with a
+// provenance hash.
+func ParseNumberWithProvenance(s string) (NumberWithProvenance, error) {
+	m := numberWithProvenancePat.FindStringSubmatch(s)
+	if m == nil {
+		return NumberWithProvenance{}, errors.Errorf("invalid version %q", s)
+	}
+	versionStr := m[1]
+	provenanceHash := m[len(m)-1]
+	n, err := Parse(versionStr)
+	if err != nil {
+		return NumberWithProvenance{}, errors.Trace(err)
+	}
+	n.provenanceHash = provenanceHash
+	return NumberWithProvenance(n), nil
+}
+
+// StripProvenance removes provenance hash from Number
+func StripProvenance(n Number) Number {
+	n.provenanceHash = ""
+	return n
+}
+
+// Provenance returns the embedded provenance hash in Number.
+func Provenance(n Number) string {
+	return n.provenanceHash
 }

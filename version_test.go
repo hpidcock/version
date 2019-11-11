@@ -312,3 +312,96 @@ func (*suite) TestParseMajorMinor(c *gc.C) {
 		}
 	}
 }
+
+var parseWithProvenanceTests = []struct {
+	v      string
+	err    string
+	expect version.NumberWithProvenance
+}{{
+	v: "0.0.0",
+}, {
+	v:      "0.0.1-ffffffffffffffffffffffffffffffffffffffff",
+	expect: version.NewNumberWithProvenance(version.Number{Major: 0, Minor: 0, Patch: 1}, "ffffffffffffffffffffffffffffffffffffffff"),
+}, {
+	v:      "0.0.2-ffffffffffffffffffffffffffffffffffffffff",
+	expect: version.NewNumberWithProvenance(version.Number{Major: 0, Minor: 0, Patch: 2}, "ffffffffffffffffffffffffffffffffffffffff"),
+}, {
+	v:      "0.1.0-ffffffffffffffffffffffffffffffffffffffff",
+	expect: version.NewNumberWithProvenance(version.Number{Major: 0, Minor: 1, Patch: 0}, "ffffffffffffffffffffffffffffffffffffffff"),
+}, {
+	v:      "0.2.3-ffffffffffffffffffffffffffffffffffffffff",
+	expect: version.NewNumberWithProvenance(version.Number{Major: 0, Minor: 2, Patch: 3}, "ffffffffffffffffffffffffffffffffffffffff"),
+}, {
+	v:      "1.0.0-ffffffffffffffffffffffffffffffffffffffff",
+	expect: version.NewNumberWithProvenance(version.Number{Major: 1, Minor: 0, Patch: 0}, "ffffffffffffffffffffffffffffffffffffffff"),
+}, {
+	v:      "10.234.3456-ffffffffffffffffffffffffffffffffffffffff",
+	expect: version.NewNumberWithProvenance(version.Number{Major: 10, Minor: 234, Patch: 3456}, "ffffffffffffffffffffffffffffffffffffffff"),
+}, {
+	v:      "10.234.3456.1-ffffffffffffffffffffffffffffffffffffffff",
+	expect: version.NewNumberWithProvenance(version.Number{Major: 10, Minor: 234, Patch: 3456, Build: 1}, "ffffffffffffffffffffffffffffffffffffffff"),
+}, {
+	v:      "10.234.3456.64-ffffffffffffffffffffffffffffffffffffffff",
+	expect: version.NewNumberWithProvenance(version.Number{Major: 10, Minor: 234, Patch: 3456, Build: 64}, "ffffffffffffffffffffffffffffffffffffffff"),
+}, {
+	v:      "10.235.3456-ffffffffffffffffffffffffffffffffffffffff",
+	expect: version.NewNumberWithProvenance(version.Number{Major: 10, Minor: 235, Patch: 3456}, "ffffffffffffffffffffffffffffffffffffffff"),
+}, {
+	v:      "1.21-alpha1-ffffffffffffffffffffffffffffffffffffffff",
+	expect: version.NewNumberWithProvenance(version.Number{Major: 1, Minor: 21, Patch: 1, Tag: "alpha"}, "ffffffffffffffffffffffffffffffffffffffff"),
+}, {
+	v:      "1.21-alpha1.1-ffffffffffffffffffffffffffffffffffffffff",
+	expect: version.NewNumberWithProvenance(version.Number{Major: 1, Minor: 21, Patch: 1, Tag: "alpha", Build: 1}, "ffffffffffffffffffffffffffffffffffffffff"),
+}, {
+	v:      "1.21-alpha10-ffffffffffffffffffffffffffffffffffffffff",
+	expect: version.NewNumberWithProvenance(version.Number{Major: 1, Minor: 21, Patch: 10, Tag: "alpha"}, "ffffffffffffffffffffffffffffffffffffffff"),
+}, {
+	v:      "1.21.0-ffffffffffffffffffffffffffffffffffffffff",
+	expect: version.NewNumberWithProvenance(version.Number{Major: 1, Minor: 21}, "ffffffffffffffffffffffffffffffffffffffff"),
+}, {
+	v:   "1234567890.2.1",
+	err: "invalid version.*",
+}, {
+	v:   "0.2..1",
+	err: "invalid version.*",
+}, {
+	v:   "1.21.alpha1",
+	err: "invalid version.*",
+}, {
+	v:   "1.21-alpha",
+	err: "invalid version.*",
+}, {
+	v:   "1.21-alpha1beta",
+	err: "invalid version.*",
+}, {
+	v:   "1.21-alpha-dev",
+	err: "invalid version.*",
+}, {
+	v:   "1.21-alpha_dev3",
+	err: "invalid version.*",
+}, {
+	v:   "1.21-alpha123dev3",
+	err: "invalid version.*",
+}}
+
+func (*suite) TestParseWithProvenance(c *gc.C) {
+	for i, test := range parseWithProvenanceTests {
+		c.Logf("test %d: %q", i, test.v)
+		got, err := version.ParseNumberWithProvenance(test.v)
+		if test.err != "" {
+			c.Assert(err, gc.ErrorMatches, test.err)
+		} else {
+			c.Assert(err, jc.ErrorIsNil)
+			c.Assert(got, gc.Equals, test.expect)
+			c.Check(got.String(), gc.Equals, test.v)
+		}
+	}
+}
+
+func (*suite) TestProvanceHashPersistance(c *gc.C) {
+	num := version.Number{Major: 1, Minor: 2, Patch: 3}
+	v1 := version.NewNumberWithProvenance(num, "ffffffffffffffffffffffffffffffffffffffff")
+	v2 := version.NumberWithProvenance(version.Number(v1))
+	c.Assert(v1, jc.DeepEquals, v2)
+	c.Assert(num == version.Number(v1), jc.IsTrue)
+}
